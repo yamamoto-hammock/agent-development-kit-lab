@@ -153,3 +153,15 @@ Runner created for agent 'weather_agent_v2'.
 --- Tool: say_goodbye called ---
 <<< Agent Response: Goodbye! Have a great day.
 ```
+
+## セッション
+過去の会話や設定を保持するには`memory`が必要。
+ADKは`Session State`を通じてこれを提供する。
+
+### `Session State`とは？
+`Session State` は、**特定のユーザーセッション（`APP_NAME`、`USER_ID`、`SESSION_ID` によって識別）に紐づく Python の辞書オブジェクト** 。
+
+- セッション内の複数の会話ターンをまたいで情報を保持。
+- エージェントやツールは、この状態（state）から情報を読み取ったり、書き込んだりすることが可能。
+- これにより、エージェントは詳細を記憶し、挙動を適応させ、応答をパーソナライズすることが可能。
+
