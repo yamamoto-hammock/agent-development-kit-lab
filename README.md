@@ -74,14 +74,14 @@ adk web
 
 ドキュメント：https://google.github.io/adk-docs/get-started/quickstart/#dev-ui-adk-web
 
-# エージェントをターミナルで起動
+## エージェントをターミナルで起動
 ```bash
 adk run multi_tool_agent
 ```
 
 ドキュメント：https://google.github.io/adk-docs/get-started/quickstart/#terminal-adk-run
 
-# APIサーバーとして起動
+## APIサーバーとして起動
 ```bash
 adk api_server
 ```
