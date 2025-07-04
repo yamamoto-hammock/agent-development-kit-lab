@@ -70,3 +70,86 @@ weather_agent = LlmAgent(
 これらの値はADK内部で使用され、自動的な処理の委任などの機能にとって重要な情報となります。
 ```
 
+## サブエージェントの定義について
+
+チュートリアルページ曰く、
+```text
+サブエージェントの`description`には、それぞれの具体的な能力を正確かつ簡潔にまとめる必要があります。
+これは、効果的な自動委任を行う上で非常に重要です。
+```
+
+```text
+サブエージェントinstructionフィールドは、その限定された範囲に合わせてカスタマイズし、
+実行する内容と実行しない内容を正確に伝える必要があります(例: 「唯一のタスクは...」)。
+```
+
+とのこと。
+
+ルートエージェントにサブエージェントを使わせるためには、ルートエージェント側に定義が必要。
+```python
+weather_agent_team = LlmAgent(
+    name="weather_agent_v2",
+    model=root_agent_model,
+    description="The main coordinator agent. Handles weather requests and delegates greetings/farewells to specialists.",
+    instruction="You are the main Weather Agent coordinating a team. Your primary responsibility is to provide weather information. "
+                "Use the 'get_weather' tool ONLY for specific weather requests (e.g., 'weather in London'). "
+                "You have specialized sub-agents: "
+                "1. 'greeting_agent': Handles simple greetings like 'Hi', 'Hello'. Delegate to it for these. "
+                "2. 'farewell_agent': Handles simple farewells like 'Bye', 'See you'. Delegate to it for these. "
+                "Analyze the user's query. If it's a greeting, delegate to 'greeting_agent'. If it's a farewell, delegate to 'farewell_agent'. "
+                "If it's a weather request, handle it yourself using 'get_weather'. "
+                "For anything else, respond appropriately or state you cannot handle it.",
+    tools=[get_weather],
+    sub_agents=[greeting_agent, farewell_agent]  # ここに使用するサブエージェントをリスト形式で定義
+)
+```
+
+`sub_agents`: 使用するサブエージェントをリスト形式で定義。
+
+`instruction`: ルート エージェントにサブエージェントについて、またサブエージェントにタスクを委任するタイミングを明示的に記載。
+
+```text
+キー概念：自動的な委任（Auto Flow）
+`sub_agents` リストを指定することで、ADKは自動的な委任（Automatic Delegation）を可能にします。
+
+ルートエージェントがユーザーからのクエリを受け取ると、
+そのエージェントの LLM は 自身のインストラクションやツールだけでなく、各サブエージェントの説明文（description）も考慮します。
+
+そして、もしそのクエリがあるサブエージェントの説明内容（例：「シンプルな挨拶を処理する」）により合致していると判断された場合、
+そのターンに限り、内部的に特別な「制御移譲アクション（内部アクション）」を生成し、処理をそのサブエージェントに委任します。
+
+委任されたサブエージェントは、自身のモデル・インストラクション・ツールを使って、そのクエリを処理します。
+
+ルートエージェントの指示が委任の決定を明確に導くようにしてください。サブエージェントの名前を挙げ、委任が行われる条件を記述してください。
+```
+とのこと。面白い。
+
+現時点のコードを動作確認したログが下記。
+正しくルートエージェントが各サブエージェントにタスクを委任して動作できている。
+
+```log
+❯ python3 multi_tool_agent/agent.py
+get_weather tools defined.
+say_hello tools defined.
+say_goodbye tools defined.
+✅ Agent 'greeting_agent' created using model 'model='openai/gpt-4o' llm_client=<google.adk.models.lite_llm.LiteLLMClient object at 0x121966270>'.
+✅ Agent 'farewell_agent' created using model 'model='openai/gpt-4o' llm_client=<google.adk.models.lite_llm.LiteLLMClient object at 0x1219f82d0>'.
+✅ Root Agent 'weather_agent_v2' created using model 'openai/gpt-4o' with sub-agents: ['greeting_agent', 'farewell_agent']
+Executing using 'asyncio.run()' (for standard Python scripts)...
+
+--- Testing Agent Team Delegation ---
+Session created: App='weather_tutorial_agent_team', User='user_1_agent_team', Session='session_001_agent_team'
+Runner created for agent 'weather_agent_v2'.
+
+>>> User Query: Hello there!
+--- Tool: say_hello called without a specific name (name_arg_value: None) ---
+<<< Agent Response: Hello there!
+
+>>> User Query: What is the weather in New York?
+--- Tool: get_weather called for city: New York ---
+<<< Agent Response: The weather in New York is sunny with a temperature of 25°C.
+
+>>> User Query: Thanks, bye!
+--- Tool: say_goodbye called ---
+<<< Agent Response: Goodbye! Have a great day.
+```
