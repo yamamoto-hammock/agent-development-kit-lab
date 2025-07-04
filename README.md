@@ -1,20 +1,18 @@
-
-
 # **Agent Development Kitの調査用リポジトリ**
+## 構築手順
 
-# 構築手順
-## python仮想環境構築＆有効化
+### python仮想環境構築＆有効化
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 ```
 
-## SDKインストール
+### SDKインストール
 ```bash
 pip install google-adk
 ```
 
-## 必須構成の作成
+### 必須構成の作成
 ```bash
 mkdir multi_tool_agent/
 echo "from . import agent" > multi_tool_agent/__init__.py
@@ -22,68 +20,40 @@ touch multi_tool_agent/agent.py
 touch multi_tool_agent/.env
 ```
 
-## OpenAIのLLMを使うためのライブラリをインストール（geminiとかなら不要）
+### マルチモデル対応のためのライブラリをインストール
 ```bash
 pip install litellm
 ```
 
-## 環境変数設定
+### 環境変数設定
+`.env.example`ファイルを参考に、`.env`ファイルを作成し、必要なAPIキーを設定します。
+
+```bash
+# .envファイルの例
+OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"
+ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY"
+```
+
+または、直接環境変数を設定することもできます：
+
 ```bash
 export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+export GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"
+export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY"
 ```
 
-## OpenAIのLLMを使うためにagent.pyを編集
+## 使用できるモデル
 
+このエージェントでは以下のモデルを使用できます：
+
+- **OpenAI**: GPT-4o, GPT-4-turbo など
+- **Google**: Gemini-2.0-flash など
+- **Anthropic**: Claude-sonnet-4, Claude-opus-4 など
+
+デフォルトではOpenAIのモデルが使用されますが、`agent.py`内で簡単に切り替えることができます。
+
+## エージェントの実行方法
 ```python
-# ファイル先頭辺りに追記
-from google.adk.agents import LlmAgent
-from google.adk.models.lite_llm import LiteLlm
-
-# 元のroot_agentはコメントアウトする
-# root_agent = Agent(
-#     name="weather_time_agent",
-#     model="gemini-2.0-flash",
-#     description=(
-#         "Agent to answer questions about the time and weather in a city."
-#     ),
-#     instruction=(
-#         "You are a helpful agent who can answer user questions about the time and weather in a city."
-#     ),
-#     tools=[get_weather, get_current_time],
-# )
-
-# 追記
-root_agent = LlmAgent(
-    model=LiteLlm(model="openai/gpt-4o"), # LiteLLM model string format
-    name="weather_time_agent",
-    description=(
-        "Agent to answer questions about the time and weather in a city."
-    ),
-    instruction=(
-        "You are a helpful agent who can answer user questions about the time and weather in a city."
-    ),
-    tools=[get_weather, get_current_time],
-)
+python3 multi_tool_agent/agent.py
 ```
-
-## エージェントをWebで起動
-```bash
-adk web
-```
-ブラウザで表示=>http://127.0.0.1:8000/
-
-ドキュメント：https://google.github.io/adk-docs/get-started/quickstart/#dev-ui-adk-web
-
-## エージェントをターミナルで起動
-```bash
-adk run multi_tool_agent
-```
-
-ドキュメント：https://google.github.io/adk-docs/get-started/quickstart/#terminal-adk-run
-
-## APIサーバーとして起動
-```bash
-adk api_server
-```
-
-ドキュメント：https://google.github.io/adk-docs/get-started/quickstart/#api-server-adk-api_server
