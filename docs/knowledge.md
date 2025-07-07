@@ -230,6 +230,64 @@ LLMへ送られたくないテキストのフィルタリングとかに使う�
 
 `before_model_callback`も`before_tool_callback`もafter版はないの？と思ったけどあるらしい。まあそりゃそうか。
 
+```log
+# `Paris`を含むリクエストはブロックされている。
+
+--- Testing Tool Argument Guardrail ('Paris' blocked) ---
+--- Turn 1: Requesting weather in New York (expect allowed) ---
+
+>>> User Query: What's the weather in New York?
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v6_tool_guardrail ---
+--- Callback: Inspecting last user message: 'What's the weather in New York?...' ---
+--- Callback: Keyword not found. Allowing LLM call for weather_agent_v6_tool_guardrail. ---
+--- Callback: block_paris_tool_guardrail running for tool 'get_weather_stateful' in agent 'weather_agent_v6_tool_guardrail' ---
+--- Callback: Inspecting args: {'city': 'New York'} ---
+--- Callback: City 'New York' is allowed for tool 'get_weather_stateful'. ---
+--- Callback: Allowing tool 'get_weather_stateful' to proceed. ---
+--- Tool: get_weather_stateful called for New York ---
+--- Tool: Reading state 'user_preference_temperature_unit': Celsius ---
+--- Tool: Generated report in Celsius. Result: {'status': 'success', 'report': 'The weather in New york is sunny with a temperature of 25°C.'} ---
+--- Tool: Updated state 'last_city_checked_stateful': New York ---
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v6_tool_guardrail ---
+--- Callback: Inspecting last user message: 'What's the weather in New York?...' ---
+--- Callback: Keyword not found. Allowing LLM call for weather_agent_v6_tool_guardrail. ---
+<<< Agent Response: The weather in New York is sunny with a temperature of 25°C.
+
+--- Turn 2: Requesting weather in Paris (expect blocked by tool guardrail) ---
+
+>>> User Query: How about Paris?
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v6_tool_guardrail ---
+--- Callback: Inspecting last user message: 'How about Paris?...' ---
+--- Callback: Keyword not found. Allowing LLM call for weather_agent_v6_tool_guardrail. ---
+--- Callback: block_paris_tool_guardrail running for tool 'get_weather_stateful' in agent 'weather_agent_v6_tool_guardrail' ---
+--- Callback: Inspecting args: {'city': 'Paris'} ---
+--- Callback: Detected blocked city 'Paris'. Blocking tool execution! ---
+--- Callback: Set state 'guardrail_tool_block_triggered': True ---
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v6_tool_guardrail ---
+--- Callback: Inspecting last user message: 'How about Paris?...' ---
+--- Callback: Keyword not found. Allowing LLM call for weather_agent_v6_tool_guardrail. ---
+<<< Agent Response: I'm sorry, but I'm currently unable to provide weather information for Paris due to policy restrictions.
+
+--- Turn 3: Requesting weather in London (expect allowed) ---
+
+>>> User Query: Tell me the weather in London.
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v6_tool_guardrail ---
+--- Callback: Inspecting last user message: 'Tell me the weather in London....' ---
+--- Callback: Keyword not found. Allowing LLM call for weather_agent_v6_tool_guardrail. ---
+--- Callback: block_paris_tool_guardrail running for tool 'get_weather_stateful' in agent 'weather_agent_v6_tool_guardrail' ---
+--- Callback: Inspecting args: {'city': 'London'} ---
+--- Callback: City 'London' is allowed for tool 'get_weather_stateful'. ---
+--- Callback: Allowing tool 'get_weather_stateful' to proceed. ---
+--- Tool: get_weather_stateful called for London ---
+--- Tool: Reading state 'user_preference_temperature_unit': Celsius ---
+--- Tool: Generated report in Celsius. Result: {'status': 'success', 'report': 'The weather in London is cloudy with a temperature of 15°C.'} ---
+--- Tool: Updated state 'last_city_checked_stateful': London ---
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v6_tool_guardrail ---
+--- Callback: Inspecting last user message: 'Tell me the weather in London....' ---
+--- Callback: Keyword not found. Allowing LLM call for weather_agent_v6_tool_guardrail. ---
+<<< Agent Response: The weather in London is cloudy with a temperature of 15°C.
+```
+
 ## 他
 
 ### 参考になりそうなもの

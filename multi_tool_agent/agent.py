@@ -36,6 +36,57 @@ initial_state = {
     "user_preference_temperature_unit": "Celsius"
 }
 
+# @title 1. Define the before_tool_callback Guardrail
+
+# Ensure necessary imports are available
+from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.tool_context import ToolContext
+from typing import Optional, Dict, Any # For type hints
+
+def block_paris_tool_guardrail(
+    tool: BaseTool, args: Dict[str, Any], tool_context: ToolContext
+) -> Optional[Dict]:
+    """
+    Checks if 'get_weather_stateful' is called for 'Paris'.
+    If so, blocks the tool execution and returns a specific error dictionary.
+    Otherwise, allows the tool call to proceed by returning None.
+    """
+    tool_name = tool.name
+    agent_name = tool_context.agent_name # Agent attempting the tool call
+    print(f"--- Callback: block_paris_tool_guardrail running for tool '{tool_name}' in agent '{agent_name}' ---")
+    print(f"--- Callback: Inspecting args: {args} ---")
+
+    # --- Guardrail Logic ---
+    target_tool_name = "get_weather_stateful" # Match the function name used by FunctionTool
+    blocked_city = "paris"
+
+    # Check if it's the correct tool and the city argument matches the blocked city
+    if tool_name == target_tool_name:
+        city_argument = args.get("city", "") # Safely get the 'city' argument
+        if city_argument and city_argument.lower() == blocked_city:
+            print(f"--- Callback: Detected blocked city '{city_argument}'. Blocking tool execution! ---")
+            # Optionally update state
+            tool_context.state["guardrail_tool_block_triggered"] = True
+            print(f"--- Callback: Set state 'guardrail_tool_block_triggered': True ---")
+
+            # Return a dictionary matching the tool's expected output format for errors
+            # This dictionary becomes the tool's result, skipping the actual tool run.
+            return {
+                "status": "error",
+                "error_message": f"Policy restriction: Weather checks for '{city_argument.capitalize()}' are currently disabled by a tool guardrail."
+            }
+        else:
+             print(f"--- Callback: City '{city_argument}' is allowed for tool '{tool_name}'. ---")
+    else:
+        print(f"--- Callback: Tool '{tool_name}' is not the target tool. Allowing. ---")
+
+
+    # If the checks above didn't return a dictionary, allow the tool to execute
+    print(f"--- Callback: Allowing tool '{tool_name}' to proceed. ---")
+    return None # Returning None allows the actual tool function to run
+
+print("✅ block_paris_tool_guardrail function defined.")
+
 def block_keyword_guardrail(callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
     """
     Inspects the latest user message for 'BLOCK'. If found, blocks the LLM call
@@ -238,32 +289,32 @@ except Exception as e:
     print(f"❌ Could not create Farewell agent. Check API Key ({farewell_agent.model}). Error: {e}")
 
 # ルートエージェント
-root_agent_model_guardrail = None
-runner_root_model_guardrail = None
+root_agent_tool_guardrail = None
+runner_root_tool_guardrail = None
 if greeting_agent and farewell_agent and 'get_weather_stateful' in globals():
     root_agent_model = MODEL_GPT_4O
-    root_agent_model_guardrail = Agent(
-        name="weather_agent_v5_model_guardrail", # New version name
+    root_agent_tool_guardrail = Agent(
+        name="weather_agent_v6_tool_guardrail", # New version name
         model=LiteLlm(model=root_agent_model),
-        description="Main agent: Provides weather (state-aware unit), delegates greetings/farewells, saves report to state.",
-        instruction="You are the main Weather Agent. Your job is to provide weather using 'get_weather_stateful'. "
-                    "The tool will format the temperature based on user preference stored in state. "
-                    "Delegate simple greetings to 'greeting_agent' and farewells to 'farewell_agent'. "
-                    "Handle only weather requests, greetings, and farewells.",
+        description="Main agent: Handles weather, delegates, includes input AND tool guardrails.",
+        instruction="You are the main Weather Agent. Provide weather using 'get_weather_stateful'. "
+                    "Delegate greetings to 'greeting_agent' and farewells to 'farewell_agent'. "
+                    "Handle only weather, greetings, and farewells.",
         tools=[get_weather_stateful], # Use the state-aware tool
         sub_agents=[greeting_agent, farewell_agent], # Include sub-agents
         output_key="last_weather_report", # <<< Auto-save agent's final weather response
-        before_model_callback=block_keyword_guardrail # <<< Assign the guardrail callback
+        before_model_callback=block_keyword_guardrail, # <<< Assign the guardrail callback
+        before_tool_callback=block_paris_tool_guardrail # <<< Assign the guardrail callback
     )
-    print(f"✅ Root Agent '{root_agent_model_guardrail.name}' created using stateful tool and output_key.")
+    print(f"✅ Root Agent '{root_agent_tool_guardrail.name}' created using stateful tool and output_key.")
 
     # --- Create Runner for this Root Agent & NEW Session Service ---
-    runner_root_model_guardrail = Runner(
-        agent=root_agent_model_guardrail,
+    runner_root_tool_guardrail = Runner(
+        agent=root_agent_tool_guardrail,
         app_name=APP_NAME,
         session_service=session_service_stateful # Use the NEW stateful session service
     )
-    print(f"✅ Runner created for stateful root agent '{runner_root_model_guardrail.agent.name}' using stateful session service.")
+    print(f"✅ Runner created for stateful root agent '{runner_root_tool_guardrail.agent.name}' using stateful session service.")
 
 else:
     print("❌ Cannot create stateful root agent. Prerequisites missing.")
@@ -287,60 +338,60 @@ async def call_agent_async(query: str, runner, user_id, session_id):
             break
     print(f"<<< Agent Response: {final_response_text}")
 
-if 'runner_root_model_guardrail' in globals() and runner_root_model_guardrail:
-    # Define the main async function for the guardrail test conversation.
+if 'runner_root_tool_guardrail' in globals() and runner_root_tool_guardrail:
+    # Define the main async function for the tool guardrail test conversation.
     # The 'await' keywords INSIDE this function are necessary for async operations.
-    async def run_guardrail_test_conversation():
-        print("\n--- Testing Model Input Guardrail ---")
+    async def run_tool_guardrail_test():
+        print("\n--- Testing Tool Argument Guardrail ('Paris' blocked) ---")
 
-        # Use the runner for the agent with the callback and the existing stateful session ID
+        # Use the runner for the agent with both callbacks and the existing stateful session
         # Define a helper lambda for cleaner interaction calls
         interaction_func = lambda query: call_agent_async(query,
-                                                         runner_root_model_guardrail,
+                                                         runner_root_tool_guardrail,
                                                          USER_ID_STATEFUL, # Use existing user ID
                                                          SESSION_ID_STATEFUL # Use existing session ID
                                                         )
-        # 1. Normal request (Callback allows, should use Fahrenheit from previous state change)
-        print("--- Turn 1: Requesting weather in London (expect allowed, Fahrenheit) ---")
-        await interaction_func("What is the weather in London?")
+        # 1. Allowed city (Should pass both callbacks, use Fahrenheit state)
+        print("--- Turn 1: Requesting weather in New York (expect allowed) ---")
+        await interaction_func("What's the weather in New York?")
 
-        # 2. Request containing the blocked keyword (Callback intercepts)
-        print("\n--- Turn 2: Requesting with blocked keyword (expect blocked) ---")
-        await interaction_func("BLOCK the request for weather in Tokyo") # Callback should catch "BLOCK"
+        # 2. Blocked city (Should pass model callback, but be blocked by tool callback)
+        print("\n--- Turn 2: Requesting weather in Paris (expect blocked by tool guardrail) ---")
+        await interaction_func("How about Paris?") # Tool callback should intercept this
 
-        # 3. Normal greeting (Callback allows root agent, delegation happens)
-        print("\n--- Turn 3: Sending a greeting (expect allowed) ---")
-        await interaction_func("Hello again")
+        # 3. Another allowed city (Should work normally again)
+        print("\n--- Turn 3: Requesting weather in London (expect allowed) ---")
+        await interaction_func("Tell me the weather in London.")
 
         # --- Inspect final session state after the conversation ---
         # This block runs after either execution method completes.
-        # Optional: Check state for the trigger flag set by the callback
-        print("\n--- Inspecting Final Session State (After Guardrail Test) ---")
+        # Optional: Check state for the tool block trigger flag
+        print("\n--- Inspecting Final Session State (After Tool Guardrail Test) ---")
         # Use the session service instance associated with this stateful session
         final_session = await session_service_stateful.get_session(app_name=APP_NAME,
-                                                         user_id=USER_ID_STATEFUL,
-                                                         session_id=SESSION_ID_STATEFUL)
+                                                             user_id=USER_ID_STATEFUL,
+                                                             session_id= SESSION_ID_STATEFUL)
         if final_session:
             # Use .get() for safer access
-            print(f"Guardrail Triggered Flag: {final_session.state.get('guardrail_block_keyword_triggered', 'Not Set (or False)')}")
+            print(f"Tool Guardrail Triggered Flag: {final_session.state.get('guardrail_tool_block_triggered', 'Not Set (or False)')}")
             print(f"Last Weather Report: {final_session.state.get('last_weather_report', 'Not Set')}") # Should be London weather if successful
             print(f"Temperature Unit: {final_session.state.get('user_preference_temperature_unit', 'Not Set')}") # Should be Fahrenheit
-            print(f"Full State Dict: {final_session.state}") # For detailed view
+            # print(f"Full State Dict: {final_session.state}") # For detailed view
         else:
             print("\n❌ Error: Could not retrieve final session state.")
 
 else:
-    print("\n⚠️ Skipping model guardrail test. Runner ('runner_root_model_guardrail') is not available.")
+    print("\n⚠️ Skipping tool guardrail test. Runner ('runner_root_tool_guardrail') is not available.")
 
 # メイン
 if __name__ == "__main__":
     print("Executing using 'asyncio.run()' (for standard Python scripts)...")
     async def main():
         await initialize_stateful_session()
-        if 'run_guardrail_test_conversation' in globals():
-            await run_guardrail_test_conversation()
+        if 'run_tool_guardrail_test' in globals():
+            await run_tool_guardrail_test()
         else:
-            print("run_team_conversation is not defined, skipping...")
+            print("run_tool_guardrail_test is not defined, skipping...")
     try:
         asyncio.run(main())
     except Exception as e:
