@@ -165,3 +165,74 @@ ADKは`Session State`を通じてこれを提供する。
 - エージェントやツールは、この状態（state）から情報を読み取ったり、書き込んだりすることが可能。
 - これにより、エージェントは詳細を記憶し、挙動を適応させ、応答をパーソナライズすることが可能。
 
+## コールバック
+
+### `before_model_callback`
+エージェントが基盤となるLLMへ送信する前に行う処理を定義できる。
+LLMへ送られたくないテキストのフィルタリングとかに使う感じっぽい。
+
+```text
+目的:リクエストを検査し、必要に応じて変更するか、事前定義されたルールに基づいてリクエストを完全にブロックします。
+一般的な使用例:
+入力検証/フィルタリング:ユーザー入力が基準を満たしているか、または許可されていないコンテンツ (PII やキーワードなど) が含まれているかどうかを確認します。
+ガードレール:有害、トピック外、またはポリシー違反のリクエストが LLM によって処理されるのを防ぎます。
+動的プロンプト変更:送信直前に、LLM 要求コンテキストにタイムリーな情報 (セッション状態からなど) を追加します。
+```
+
+```log
+# `BLOCK`という文字列がユーザー入力に存在した場合、LLMへの送信をブロックしている。
+
+--- Testing Model Input Guardrail ---
+--- Turn 1: Requesting weather in London (expect allowed, Fahrenheit) ---
+
+>>> User Query: What is the weather in London?
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v5_model_guardrail ---
+--- Callback: Inspecting last user message: 'What is the weather in London?...' ---
+--- Callback: Keyword not found. Allowing LLM call for weather_agent_v5_model_guardrail. ---
+--- Tool: get_weather_stateful called for London ---
+--- Tool: Reading state 'user_preference_temperature_unit': Celsius ---
+--- Tool: Generated report in Celsius. Result: {'status': 'success', 'report': 'The weather in London is cloudy with a temperature of 15°C.'} ---
+--- Tool: Updated state 'last_city_checked_stateful': London ---
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v5_model_guardrail ---
+--- Callback: Inspecting last user message: 'What is the weather in London?...' ---
+--- Callback: Keyword not found. Allowing LLM call for weather_agent_v5_model_guardrail. ---
+<<< Agent Response: The weather in London is cloudy with a temperature of 15°C.
+
+--- Turn 2: Requesting with blocked keyword (expect blocked) ---
+
+>>> User Query: BLOCK the request for weather in Tokyo
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v5_model_guardrail ---
+--- Callback: Inspecting last user message: 'BLOCK the request for weather in Tokyo...' ---
+--- Callback: Found 'BLOCK'. Blocking LLM call! ---
+--- Callback: Set state 'guardrail_block_keyword_triggered': True ---
+<<< Agent Response: I cannot process this request because it contains the blocked keyword 'BLOCK'.
+
+--- Turn 3: Sending a greeting (expect allowed) ---
+
+>>> User Query: Hello again
+--- Callback: block_keyword_guardrail running for agent: weather_agent_v5_model_guardrail ---
+--- Callback: Inspecting last user message: 'Hello again...' ---
+--- Callback: Keyword not found. Allowing LLM call for weather_agent_v5_model_guardrail. ---
+--- Tool: say_hello called without a specific name (name_arg_value: None) ---
+<<< Agent Response: Hello there!
+```
+
+### `before_tool_callback`
+ツールを実行する前の処理を定義できる。ツールの使用履歴をDB保存するときとかに便利そう。
+
+```text
+目的:ツールの引数を検証し、特定の入力に基づいてツールの実行を防止し、引数を動的に変更し、リソース使用ポリシーを適用します。
+一般的な使用例:
+引数の検証: LLM によって提供された引数が有効であるか、許容範囲内であるか、または予期される形式に準拠しているかどうかを確認します。
+リソース保護:コストがかかったり、制限されたデータにアクセスしたり、望ましくない副作用 (特定のパラメータに対する API 呼び出しをブロックするなど) を引き起こす可能性のある入力でツールが呼び出されないようにします。
+動的な引数の変更:ツールを実行する前に、セッション状態またはその他のコンテキスト情報に基づいて引数を調整します。
+```
+
+`before_model_callback`も`before_tool_callback`もafter版はないの？と思ったけどあるらしい。まあそりゃそうか。
+
+## 他
+
+### 参考になりそうなもの
+Agent Development Kit（邦訳）
+https://zenn.dev/uxoxu/books/adk-docs-japanese/viewer/index
+

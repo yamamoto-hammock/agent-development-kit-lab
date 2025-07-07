@@ -9,6 +9,9 @@ from google.adk.runners import Runner
 from google.genai import types
 from typing import Optional
 from google.adk.tools.tool_context import ToolContext
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
 
 # モデル定数の定義
 MODEL_GEMINI_2_0_FLASH = "gemini-2.0-flash"
@@ -32,6 +35,50 @@ USER_ID_STATEFUL = "user_state_demo"
 initial_state = {
     "user_preference_temperature_unit": "Celsius"
 }
+
+def block_keyword_guardrail(callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
+    """
+    Inspects the latest user message for 'BLOCK'. If found, blocks the LLM call
+    and returns a predefined LlmResponse. Otherwise, returns None to proceed.
+    """
+    agent_name = callback_context.agent_name # Get the name of the agent whose model call is being intercepted
+    print(f"--- Callback: block_keyword_guardrail running for agent: {agent_name} ---")
+
+    # Extract the text from the latest user message in the request history
+    last_user_message_text = ""
+    if llm_request.contents:
+        # Find the most recent message with role 'user'
+        for content in reversed(llm_request.contents):
+            if content.role == 'user' and content.parts:
+                # Assuming text is in the first part for simplicity
+                if content.parts[0].text:
+                    last_user_message_text = content.parts[0].text
+                    break # Found the last user message text
+
+    print(f"--- Callback: Inspecting last user message: '{last_user_message_text[:100]}...' ---") # Log first 100 chars
+
+    # --- Guardrail Logic ---
+    keyword_to_block = "BLOCK"
+    if keyword_to_block in last_user_message_text.upper(): # Case-insensitive check
+        print(f"--- Callback: Found '{keyword_to_block}'. Blocking LLM call! ---")
+        # Optionally, set a flag in state to record the block event
+        callback_context.state["guardrail_block_keyword_triggered"] = True
+        print(f"--- Callback: Set state 'guardrail_block_keyword_triggered': True ---")
+
+        # Construct and return an LlmResponse to stop the flow and send this back instead
+        return LlmResponse(
+            content=types.Content(
+                role="model", # Mimic a response from the agent's perspective
+                parts=[types.Part(text=f"I cannot process this request because it contains the blocked keyword '{keyword_to_block}'.")],
+            )
+            # Note: You could also set an error_message field here if needed
+        )
+    else:
+        # Keyword not found, allow the request to proceed to the LLM
+        print(f"--- Callback: Keyword not found. Allowing LLM call for {agent_name}. ---")
+        return None # Returning None signals ADK to continue normally
+
+print("✅ block_keyword_guardrail function defined.")
 
 # Create an async function to initialize the session
 async def initialize_stateful_session():
@@ -191,12 +238,12 @@ except Exception as e:
     print(f"❌ Could not create Farewell agent. Check API Key ({farewell_agent.model}). Error: {e}")
 
 # ルートエージェント
-root_agent = None
-runner_root = None # Initialize runner
+root_agent_model_guardrail = None
+runner_root_model_guardrail = None
 if greeting_agent and farewell_agent and 'get_weather_stateful' in globals():
     root_agent_model = MODEL_GPT_4O
-    root_agent_stateful = Agent(
-        name="weather_agent_v4_stateful", # New version name
+    root_agent_model_guardrail = Agent(
+        name="weather_agent_v5_model_guardrail", # New version name
         model=LiteLlm(model=root_agent_model),
         description="Main agent: Provides weather (state-aware unit), delegates greetings/farewells, saves report to state.",
         instruction="You are the main Weather Agent. Your job is to provide weather using 'get_weather_stateful'. "
@@ -205,17 +252,18 @@ if greeting_agent and farewell_agent and 'get_weather_stateful' in globals():
                     "Handle only weather requests, greetings, and farewells.",
         tools=[get_weather_stateful], # Use the state-aware tool
         sub_agents=[greeting_agent, farewell_agent], # Include sub-agents
-        output_key="last_weather_report" # <<< Auto-save agent's final weather response
+        output_key="last_weather_report", # <<< Auto-save agent's final weather response
+        before_model_callback=block_keyword_guardrail # <<< Assign the guardrail callback
     )
-    print(f"✅ Root Agent '{root_agent_stateful.name}' created using stateful tool and output_key.")
+    print(f"✅ Root Agent '{root_agent_model_guardrail.name}' created using stateful tool and output_key.")
 
     # --- Create Runner for this Root Agent & NEW Session Service ---
-    runner_root_stateful = Runner(
-        agent=root_agent_stateful,
+    runner_root_model_guardrail = Runner(
+        agent=root_agent_model_guardrail,
         app_name=APP_NAME,
         session_service=session_service_stateful # Use the NEW stateful session service
     )
-    print(f"✅ Runner created for stateful root agent '{runner_root_stateful.agent.name}' using stateful session service.")
+    print(f"✅ Runner created for stateful root agent '{runner_root_model_guardrail.agent.name}' using stateful session service.")
 
 else:
     print("❌ Cannot create stateful root agent. Prerequisites missing.")
@@ -239,117 +287,58 @@ async def call_agent_async(query: str, runner, user_id, session_id):
             break
     print(f"<<< Agent Response: {final_response_text}")
 
-# ルートエージェント呼び出し
-root_agent_var_name = 'root_agent'
-if 'root_agent_stateful' in globals():
-    root_agent_var_name = 'root_agent_stateful'
-elif 'root_agent' not in globals():
-    print("⚠️ Root agent ('root_agent' or 'weather_agent_team') not found. Cannot define run_team_conversation.")
-    root_agent = None # または実行を防ぐフラグを設定
+if 'runner_root_model_guardrail' in globals() and runner_root_model_guardrail:
+    # Define the main async function for the guardrail test conversation.
+    # The 'await' keywords INSIDE this function are necessary for async operations.
+    async def run_guardrail_test_conversation():
+        print("\n--- Testing Model Input Guardrail ---")
 
-# print(f"root_agent_var_name: {root_agent_var_name}")
-# print(f"root_agent_var_name in globals(): {root_agent_var_name in globals()}")
-# print(f"globals()[root_agent_var_name]: {globals()[root_agent_var_name]}")
-if root_agent_var_name in globals() and globals()[root_agent_var_name]:
-    async def run_team_conversation():
-        print("\n--- Testing Agent Team Delegation ---")
-        session_service = InMemorySessionService()
-        session = await session_service.create_session(
-            app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
-        )
-        print(f"Session created: App='{APP_NAME}', User='{USER_ID}', Session='{SESSION_ID}'")
+        # Use the runner for the agent with the callback and the existing stateful session ID
+        # Define a helper lambda for cleaner interaction calls
+        interaction_func = lambda query: call_agent_async(query,
+                                                         runner_root_model_guardrail,
+                                                         USER_ID_STATEFUL, # Use existing user ID
+                                                         SESSION_ID_STATEFUL # Use existing session ID
+                                                        )
+        # 1. Normal request (Callback allows, should use Fahrenheit from previous state change)
+        print("--- Turn 1: Requesting weather in London (expect allowed, Fahrenheit) ---")
+        await interaction_func("What is the weather in London?")
 
-        actual_root_agent = globals()[root_agent_var_name]
-        runner_agent_team = Runner(
-            agent=actual_root_agent,
-            app_name=APP_NAME,
-            session_service=session_service
-        )
-        print(f"Runner created for agent '{actual_root_agent.name}'.")
+        # 2. Request containing the blocked keyword (Callback intercepts)
+        print("\n--- Turn 2: Requesting with blocked keyword (expect blocked) ---")
+        await interaction_func("BLOCK the request for weather in Tokyo") # Callback should catch "BLOCK"
 
-        await call_agent_async(query = "Hello there!",
-                               runner=runner_agent_team,
-                               user_id=USER_ID,
-                               session_id=SESSION_ID)
-        await call_agent_async(query = "What is the weather in New York?",
-                               runner=runner_agent_team,
-                               user_id=USER_ID,
-                               session_id=SESSION_ID)
-        await call_agent_async(query = "Thanks, bye!",
-                               runner=runner_agent_team,
-                               user_id=USER_ID,
-                               session_id=SESSION_ID)
-
-else:
-    print("\n⚠️ Skipping agent team conversation execution as the root agent was not successfully defined in a previous step.")
-
-
-# セッション状態を使用した天気取得ツール
-if 'runner_root_stateful' in globals() and runner_root_stateful:
-    async def run_stateful_conversation():
-        print("\n--- Testing State: Temp Unit Conversion & output_key ---")
-
-        # 1. Check weather (Uses initial state: Celsius)
-        print("--- Turn 1: Requesting weather in London (expect Celsius) ---")
-        await call_agent_async(query= "What's the weather in London?",
-                               runner=runner_root_stateful,
-                               user_id=USER_ID_STATEFUL,
-                               session_id=SESSION_ID_STATEFUL
-                              )
-
-        # 2. Manually update state preference to Fahrenheit - DIRECTLY MODIFY STORAGE
-        print("\n--- Manually Updating State: Setting unit to Fahrenheit ---")
-        try:
-            stored_session = session_service_stateful.sessions[APP_NAME][USER_ID_STATEFUL][SESSION_ID_STATEFUL]
-            stored_session.state["user_preference_temperature_unit"] = "Fahrenheit"
-            print(f"--- Stored session state updated. Current 'user_preference_temperature_unit': {stored_session.state.get('user_preference_temperature_unit', 'Not Set')} ---") # Added .get for safety
-        except KeyError:
-            print(f"--- Error: Could not retrieve session '{SESSION_ID_STATEFUL}' from internal storage for user '{USER_ID_STATEFUL}' in app '{APP_NAME}' to update state. Check IDs and if session was created. ---")
-        except Exception as e:
-             print(f"--- Error updating internal session state: {e} ---")
-
-        # 3. Check weather again (Tool should now use Fahrenheit)
-        # This will also update 'last_weather_report' via output_key
-        print("\n--- Turn 2: Requesting weather in New York (expect Fahrenheit) ---")
-        await call_agent_async(query= "Tell me the weather in New York.",
-                               runner=runner_root_stateful,
-                               user_id=USER_ID_STATEFUL,
-                               session_id=SESSION_ID_STATEFUL
-                              )
-
-        # 4. Test basic delegation (should still work)
-        # This will update 'last_weather_report' again, overwriting the NY weather report
-        print("\n--- Turn 3: Sending a greeting ---")
-        await call_agent_async(query= "Hi!",
-                               runner=runner_root_stateful,
-                               user_id=USER_ID_STATEFUL,
-                               session_id=SESSION_ID_STATEFUL
-                              )
+        # 3. Normal greeting (Callback allows root agent, delegation happens)
+        print("\n--- Turn 3: Sending a greeting (expect allowed) ---")
+        await interaction_func("Hello again")
 
         # --- Inspect final session state after the conversation ---
-        # This block runs after either execution method completes.    
-        print("\n--- Inspecting Final Session State ---")
+        # This block runs after either execution method completes.
+        # Optional: Check state for the trigger flag set by the callback
+        print("\n--- Inspecting Final Session State (After Guardrail Test) ---")
+        # Use the session service instance associated with this stateful session
         final_session = await session_service_stateful.get_session(app_name=APP_NAME,
-                                                             user_id= USER_ID_STATEFUL,
-                                                             session_id=SESSION_ID_STATEFUL)
-        
+                                                         user_id=USER_ID_STATEFUL,
+                                                         session_id=SESSION_ID_STATEFUL)
         if final_session:
-            print(f"Final Preference: {final_session.state.get('user_preference_temperature_unit', 'Not Set')}")
-            print(f"Final Last Weather Report (from output_key): {final_session.state.get('last_weather_report', 'Not Set')}")
-            print(f"Final Last City Checked (by tool): {final_session.state.get('last_city_checked_stateful', 'Not Set')}")
+            # Use .get() for safer access
+            print(f"Guardrail Triggered Flag: {final_session.state.get('guardrail_block_keyword_triggered', 'Not Set (or False)')}")
+            print(f"Last Weather Report: {final_session.state.get('last_weather_report', 'Not Set')}") # Should be London weather if successful
+            print(f"Temperature Unit: {final_session.state.get('user_preference_temperature_unit', 'Not Set')}") # Should be Fahrenheit
+            print(f"Full State Dict: {final_session.state}") # For detailed view
         else:
             print("\n❌ Error: Could not retrieve final session state.")
 
 else:
-    print("\n⚠️ Skipping state test conversation. Stateful root agent runner ('runner_root_stateful') is not available.")
+    print("\n⚠️ Skipping model guardrail test. Runner ('runner_root_model_guardrail') is not available.")
 
 # メイン
 if __name__ == "__main__":
     print("Executing using 'asyncio.run()' (for standard Python scripts)...")
     async def main():
         await initialize_stateful_session()
-        if 'run_stateful_conversation' in globals():
-            await run_stateful_conversation()
+        if 'run_guardrail_test_conversation' in globals():
+            await run_guardrail_test_conversation()
         else:
             print("run_team_conversation is not defined, skipping...")
     try:
